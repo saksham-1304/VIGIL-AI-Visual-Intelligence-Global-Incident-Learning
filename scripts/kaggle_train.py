@@ -439,6 +439,11 @@ def main() -> None:
         if checkpoint_export_dir.exists():
             shutil.rmtree(checkpoint_export_dir)
         shutil.copytree(checkpoint_dir, checkpoint_export_dir)
+    else:
+        print(
+            f"[kaggle_train] Checkpoint directory not found, skipping export: {checkpoint_dir}",
+            flush=True,
+        )
 
     with eval_report_path.open("r", encoding="utf-8") as infile:
         report = json.load(infile)
@@ -474,7 +479,7 @@ def main() -> None:
             "feedback_samples": args.feedback_samples,
             "feedback_label_noise": args.feedback_label_noise,
             "quality_gate_enabled": not args.skip_quality_gate,
-            "checkpoint_files": sorted([p.name for p in checkpoint_dir.glob("*.pt")]),
+            "checkpoint_files": sorted([p.name for p in checkpoint_dir.glob("*.pt")]) if checkpoint_dir.exists() else [],
         },
         "output_dir": str(output_dir),
         "files": sorted([path.name for path in output_dir.iterdir() if path.is_file()]),
