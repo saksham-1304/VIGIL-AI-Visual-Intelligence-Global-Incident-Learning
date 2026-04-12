@@ -28,3 +28,16 @@ class AlertModel(Base):
     title = Column(String, nullable=False)
     severity = Column(String, index=True, nullable=False)
     message = Column(Text, nullable=False)
+
+
+class EventFeedbackModel(Base):
+    __tablename__ = "event_feedback"
+
+    id = Column(String, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    event_id = Column(String, index=True, nullable=False)
+    camera_id = Column(String, index=True, nullable=False)
+    label = Column(String, index=True, nullable=False)
+    reviewer = Column(String, nullable=False, default="operator")
+    note = Column(Text, nullable=False, default="")
+    metadata_json = Column(JSON, nullable=False, default=dict)

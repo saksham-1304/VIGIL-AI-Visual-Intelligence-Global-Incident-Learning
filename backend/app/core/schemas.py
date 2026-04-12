@@ -13,6 +13,12 @@ class Severity(str, Enum):
     critical = "critical"
 
 
+class FeedbackLabel(str, Enum):
+    incident = "incident"
+    not_incident = "not_incident"
+    uncertain = "uncertain"
+
+
 class Detection(BaseModel):
     label: str
     confidence: float
@@ -51,3 +57,48 @@ class UploadResponse(BaseModel):
     accepted: bool
     filename: str
     detail: str
+
+
+class EventFeedbackRequest(BaseModel):
+    event_id: str
+    label: FeedbackLabel
+    reviewer: str = "operator"
+    note: str = ""
+
+
+class EventFeedbackResponse(BaseModel):
+    accepted: bool
+    event_id: str
+    label: FeedbackLabel
+    reviewer: str
+    recalibration_recommended: bool
+
+
+class ModelCalibrationStatus(BaseModel):
+    current_threshold: float
+    recommended_threshold: float | None = None
+    feedback_samples: int = 0
+    labeled_event_samples: int = 0
+    calibration_ready: bool = False
+
+
+class DriftStatus(BaseModel):
+    enabled: bool
+    status: str
+    baseline_mean: float | None = None
+    recent_mean: float | None = None
+    mean_shift_sigma: float | None = None
+    recent_count: int = 0
+
+
+class RecalibrateRequest(BaseModel):
+    min_samples: int = 20
+    apply: bool = True
+
+
+class RecalibrateResponse(BaseModel):
+    applied: bool
+    previous_threshold: float
+    current_threshold: float
+    recommended_threshold: float | None = None
+    labeled_event_samples: int = 0

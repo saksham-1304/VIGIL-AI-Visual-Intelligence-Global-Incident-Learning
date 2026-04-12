@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     blip_model: str = "Salesforce/blip-image-captioning-base"
 
     anomaly_threshold: float = 0.72
+    min_anomaly_threshold: float = 0.35
+    max_anomaly_threshold: float = 0.95
+    drift_recent_window: int = 4000
+    calibration_report_path: str = "artifacts/eval_report.json"
 
 
 settings = Settings()

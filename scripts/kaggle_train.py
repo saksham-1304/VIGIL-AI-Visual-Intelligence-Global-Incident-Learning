@@ -111,6 +111,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--n-estimators", type=int, default=400)
     parser.add_argument("--contamination", type=float, default=0.03)
+    parser.add_argument("--disable-yolo", action="store_true", help="Disable YOLO semantic feature extraction")
+    parser.add_argument("--yolo-weights", type=str, default="yolov8n.pt")
+    parser.add_argument("--yolo-device", type=str, default="cpu")
+    parser.add_argument("--yolo-conf", type=float, default=0.3)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--amp", action="store_true", help="Enable mixed precision for autoencoder training")
     parser.add_argument("--multi-gpu", action="store_true", help="Use all visible GPUs for autoencoder training")
@@ -127,6 +131,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-benchmark-frames", type=int, default=240)
     parser.add_argument("--heartbeat-seconds", type=int, default=30)
     parser.add_argument("--progress-every", type=int, default=5000)
+    parser.add_argument("--cross-scene-min-rows", type=int, default=25)
+    parser.add_argument("--holdout-ratio", type=float, default=0.2)
+    parser.add_argument("--random-seed", type=int, default=42)
+    parser.add_argument("--baseline-max-train", type=int, default=20000)
+    parser.add_argument("--skip-load-test", action="store_true")
+    parser.add_argument("--load-cameras", type=int, default=4)
+    parser.add_argument("--load-frames-per-camera", type=int, default=75)
+    parser.add_argument("--load-detector-mode", choices=["auto", "yolo", "fallback"], default="fallback")
+    parser.add_argument("--skip-feedback-simulation", action="store_true")
+    parser.add_argument("--feedback-samples", type=int, default=800)
+    parser.add_argument("--feedback-label-noise", type=float, default=0.03)
+    parser.add_argument("--skip-quality-gate", action="store_true")
     return parser.parse_args()
 
 
@@ -147,6 +163,9 @@ def main() -> None:
     iforest_path = models_dir / "isolation_forest.joblib"
     eval_report_path = artifacts_dir / "eval_report.json"
     benchmark_path = artifacts_dir / "latency_benchmark.json"
+    load_test_path = artifacts_dir / "multi_camera_load_test.json"
+    feedback_report_path = artifacts_dir / "feedback_simulation.json"
+    quality_gate_path = artifacts_dir / "project_readiness.json"
 
     checkpoint_dir = Path(args.checkpoint_dir)
     if not checkpoint_dir.is_absolute():
@@ -160,24 +179,35 @@ def main() -> None:
 
     python_exec = sys.executable
 
+    extract_cmd = [
+        python_exec,
+        "ml/scripts/extract_features.py",
+        "--input",
+        args.input_dir,
+        "--output",
+        str(features_path),
+        "--frame-step",
+        str(args.frame_step),
+        "--max-images",
+        str(args.max_images),
+        "--progress-every",
+        str(args.progress_every),
+        "--heartbeat-seconds",
+        str(args.heartbeat_seconds),
+        "--yolo-weights",
+        args.yolo_weights,
+        "--yolo-device",
+        args.yolo_device,
+        "--yolo-conf",
+        str(args.yolo_conf),
+    ]
+    if args.disable_yolo:
+        print("[kaggle_train] YOLO semantic extraction disabled", flush=True)
+        extract_cmd.append("--disable-yolo")
+
     run_command(
         "feature extraction",
-        [
-            python_exec,
-            "ml/scripts/extract_features.py",
-            "--input",
-            args.input_dir,
-            "--output",
-            str(features_path),
-            "--frame-step",
-            str(args.frame_step),
-            "--max-images",
-            str(args.max_images),
-            "--progress-every",
-            str(args.progress_every),
-            "--heartbeat-seconds",
-            str(args.heartbeat_seconds),
-        ],
+        extract_cmd,
         cwd=repo_root,
         env=env,
         heartbeat_seconds=args.heartbeat_seconds,
@@ -259,6 +289,14 @@ def main() -> None:
             str(eval_report_path),
             "--device",
             args.device,
+            "--cross-scene-min-rows",
+            str(args.cross_scene_min_rows),
+            "--holdout-ratio",
+            str(args.holdout_ratio),
+            "--random-seed",
+            str(args.random_seed),
+            "--baseline-max-train",
+            str(args.baseline_max_train),
         ],
         cwd=repo_root,
         env=env,
@@ -283,10 +321,94 @@ def main() -> None:
             heartbeat_seconds=args.heartbeat_seconds,
         )
 
+    if not args.skip_load_test:
+        run_command(
+            "multi-camera load validation",
+            [
+                python_exec,
+                "ml/scripts/multi_camera_load_test.py",
+                "--output",
+                str(load_test_path),
+                "--cameras",
+                str(args.load_cameras),
+                "--frames-per-camera",
+                str(args.load_frames_per_camera),
+                "--model-device",
+                args.device,
+                "--detector-mode",
+                args.load_detector_mode,
+            ],
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
+
+    if not args.skip_feedback_simulation:
+        run_command(
+            "feedback-loop simulation",
+            [
+                python_exec,
+                "ml/scripts/simulate_feedback_loop.py",
+                "--features",
+                str(features_path),
+                "--ae",
+                str(autoencoder_path),
+                "--iforest",
+                str(iforest_path),
+                "--eval-report",
+                str(eval_report_path),
+                "--output",
+                str(feedback_report_path),
+                "--device",
+                args.device,
+                "--feedback-samples",
+                str(args.feedback_samples),
+                "--label-noise",
+                str(args.feedback_label_noise),
+            ],
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
+
+    if not args.skip_quality_gate:
+        quality_cmd = [
+            python_exec,
+            "ml/scripts/quality_gate.py",
+            "--eval-report",
+            str(eval_report_path),
+            "--output",
+            str(quality_gate_path),
+        ]
+        if load_test_path.exists():
+            quality_cmd.extend(["--load-report", str(load_test_path)])
+        if feedback_report_path.exists():
+            quality_cmd.extend(["--feedback-report", str(feedback_report_path)])
+
+        run_command(
+            "quality gate scoring",
+            quality_cmd,
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for source in [features_path, autoencoder_path, iforest_path, eval_report_path]:
+    export_candidates = [
+        features_path,
+        autoencoder_path,
+        iforest_path,
+        eval_report_path,
+        load_test_path,
+        feedback_report_path,
+        quality_gate_path,
+    ]
+
+    for source in export_candidates:
+        if not source.exists():
+            continue
         destination = output_dir / source.name
         shutil.copy2(source, destination)
 
@@ -315,6 +437,22 @@ def main() -> None:
             "resume": args.resume,
             "heartbeat_seconds": args.heartbeat_seconds,
             "progress_every": args.progress_every,
+            "yolo_enabled": not args.disable_yolo,
+            "yolo_weights": args.yolo_weights,
+            "yolo_device": args.yolo_device,
+            "yolo_conf": args.yolo_conf,
+            "cross_scene_min_rows": args.cross_scene_min_rows,
+            "holdout_ratio": args.holdout_ratio,
+            "random_seed": args.random_seed,
+            "baseline_max_train": args.baseline_max_train,
+            "load_test_enabled": not args.skip_load_test,
+            "load_cameras": args.load_cameras,
+            "load_frames_per_camera": args.load_frames_per_camera,
+            "load_detector_mode": args.load_detector_mode,
+            "feedback_simulation_enabled": not args.skip_feedback_simulation,
+            "feedback_samples": args.feedback_samples,
+            "feedback_label_noise": args.feedback_label_noise,
+            "quality_gate_enabled": not args.skip_quality_gate,
             "checkpoint_files": sorted([p.name for p in checkpoint_dir.glob("*.pt")]),
         },
         "output_dir": str(output_dir),

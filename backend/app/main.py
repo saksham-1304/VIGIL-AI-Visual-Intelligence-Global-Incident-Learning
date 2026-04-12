@@ -3,12 +3,13 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import alerts, events, health, ingest, metrics, stream
+from app.api.routes import alerts, events, health, ingest, metrics, model_ops, stream
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.database import Base, SessionLocal, engine
 from app.services.alert_engine import AlertEngine
 from app.services.event_store import EventStore
+from app.services.model_ops import ModelOpsService
 from app.services.stream_processor import StreamProcessor
 from app.ws.manager import WebSocketManager
 
@@ -32,11 +33,19 @@ async def startup_event() -> None:
     ws_manager = WebSocketManager()
     event_store = EventStore(SessionLocal)
     alert_engine = AlertEngine(anomaly_threshold=settings.anomaly_threshold)
+    model_ops_service = ModelOpsService(
+        base_threshold=settings.anomaly_threshold,
+        min_threshold=settings.min_anomaly_threshold,
+        max_threshold=settings.max_anomaly_threshold,
+        recent_window=settings.drift_recent_window,
+        baseline_report_path=settings.calibration_report_path,
+    )
     stream_processor = StreamProcessor(
         event_store=event_store,
         alert_engine=alert_engine,
         ws_manager=ws_manager,
         settings=settings,
+        model_ops=model_ops_service,
         event_loop=main_loop,
     )
 
@@ -44,6 +53,7 @@ async def startup_event() -> None:
     app.state.ws_manager = ws_manager
     app.state.event_store = event_store
     app.state.alert_engine = alert_engine
+    app.state.model_ops = model_ops_service
     app.state.stream_processor = stream_processor
 
 
@@ -62,4 +72,5 @@ app.include_router(events.router)
 app.include_router(alerts.router)
 app.include_router(ingest.router)
 app.include_router(stream.router)
+app.include_router(model_ops.router)
 app.include_router(metrics.router)

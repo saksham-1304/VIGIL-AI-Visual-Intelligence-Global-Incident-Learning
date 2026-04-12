@@ -52,11 +52,12 @@ class _FallbackExplainer:
 
 
 class StreamProcessor:
-    def __init__(self, event_store, alert_engine, ws_manager, settings, event_loop=None):
+    def __init__(self, event_store, alert_engine, ws_manager, settings, model_ops=None, event_loop=None):
         self.event_store = event_store
         self.alert_engine = alert_engine
         self.ws_manager = ws_manager
         self.settings = settings
+        self.model_ops = model_ops
         self.event_loop = event_loop
 
         self.detector = _FallbackDetector()
@@ -170,18 +171,24 @@ class StreamProcessor:
         detections_raw = self.detector.detect(frame)
         tracked = self.tracker.update(detections_raw)
         actions = self.action_recognizer.predict(frame, tracked)
-        anomaly_score = self.anomaly.score(frame, tracked, actions)
+        anomaly_details = self._score_anomaly(frame, tracked, actions)
+        anomaly_score = float(anomaly_details["score"])
+        threshold = self.model_ops.current_threshold() if self.model_ops is not None else self.settings.anomaly_threshold
+
+        if self.model_ops is not None:
+            self.model_ops.observe_score(camera_id=camera_id, score=anomaly_score)
+
         description = self.explainer.describe_scene(frame, tracked, actions, anomaly_score)
 
         elapsed = time.perf_counter() - start
         inference_latency_seconds.observe(elapsed)
         processed_frames_total.labels(camera_id=camera_id).inc()
 
-        if not tracked and anomaly_score < self.settings.anomaly_threshold:
+        if not tracked and anomaly_score < threshold:
             return None
 
-        event_type = "anomaly" if anomaly_score >= self.settings.anomaly_threshold else "behavior"
-        severity = Severity.high if anomaly_score >= self.settings.anomaly_threshold else Severity.medium
+        event_type = "anomaly" if anomaly_score >= threshold else "behavior"
+        severity = Severity.high if anomaly_score >= threshold else Severity.medium
 
         if any("fall" in action.lower() for action in actions):
             event_type = "fall_detection"
@@ -207,9 +214,23 @@ class StreamProcessor:
             ],
             actions=actions,
             anomaly_score=round(float(anomaly_score), 4),
-            metadata={"latency_ms": round(elapsed * 1000, 2)},
+            metadata={
+                "latency_ms": round(elapsed * 1000, 2),
+                "threshold_used": round(float(threshold), 4),
+                "score_components": anomaly_details.get("components", {}),
+            },
         )
         return event
+
+    def _score_anomaly(self, frame, tracked: list[dict], actions: list[str]) -> dict:
+        if hasattr(self.anomaly, "score_with_breakdown"):
+            try:
+                return self.anomaly.score_with_breakdown(frame, tracked, actions)
+            except Exception:
+                pass
+
+        score = float(self.anomaly.score(frame, tracked, actions))
+        return {"score": score, "components": {}}
 
     def _persist_and_alert(self, event: IncidentEvent) -> None:
         self.event_store.create_event(event)

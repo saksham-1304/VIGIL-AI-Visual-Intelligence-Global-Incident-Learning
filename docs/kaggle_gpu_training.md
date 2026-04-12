@@ -45,9 +45,12 @@ You can run either:
 3. Run Kaggle training orchestrator.
 
    Example command:
-   python scripts/kaggle_train.py --input-dir /kaggle/input/ucf-crime-dataset --output-dir /kaggle/working/incident-intel-output --device auto --epochs 40 --latent-dim 64 --batch-size 128 --max-images 300000
+   python scripts/kaggle_train.py --input-dir /kaggle/input/ucf-crime-dataset --output-dir /kaggle/working/incident-intel-output --device auto --epochs 40 --latent-dim 64 --batch-size 128 --max-images 300000 --yolo-device cuda --yolo-conf 0.35 --cross-scene-min-rows 20 --load-cameras 4 --load-frames-per-camera 60 --feedback-samples 1000
 
    Note: webcam benchmark is disabled by default in Kaggle. If you want benchmark results, add --run-benchmark.
+
+   Faster fallback (disable YOLO semantic fusion):
+   python scripts/kaggle_train.py --input-dir /kaggle/input/ucf-crime-dataset --output-dir /kaggle/working/incident-intel-output --device auto --epochs 25 --max-images 150000 --disable-yolo --skip-load-test --skip-feedback-simulation --skip-quality-gate
 
 4. Verify output files under /kaggle/working/incident-intel-output:
 
@@ -55,8 +58,19 @@ You can run either:
    - autoencoder.pt
    - isolation_forest.joblib
    - eval_report.json
+   - multi_camera_load_test.json
+   - feedback_simulation.json
+   - project_readiness.json
    - training_summary.json
    - incident_intel_training_outputs.zip
+
+   `eval_report.json` now contains:
+
+   - PR-AUC and ROC-AUC per model
+   - Calibrated thresholds
+   - Ablation ranking including `hybrid_yolo_fusion`
+   - Per-class recall and cross-scene diagnostics
+   - Baseline score stats for backend drift monitoring
 
 5. Download incident_intel_training_outputs.zip from Kaggle output panel.
 

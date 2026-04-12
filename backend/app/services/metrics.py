@@ -17,3 +17,15 @@ inference_latency_seconds = Histogram(
     "Model inference latency in seconds",
     buckets=(0.01, 0.03, 0.05, 0.1, 0.2, 0.5, 1, 2),
 )
+
+feedback_submissions_total = Counter(
+    "feedback_submissions_total",
+    "Total number of human feedback labels submitted",
+    ["label"],
+)
+
+model_recalibrations_total = Counter(
+    "model_recalibrations_total",
+    "Total number of model recalibration requests",
+    ["applied"],
+)

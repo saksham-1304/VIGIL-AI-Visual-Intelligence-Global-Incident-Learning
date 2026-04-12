@@ -17,6 +17,7 @@
 [Anomaly Intelligence]
   |- Autoencoder Reconstruction Score
   |- Isolation Forest Feature Score
+  |- YOLO Semantic Feature Score
   |- Hybrid Score Fusion
   v
 [Multimodal Reasoning]
@@ -25,7 +26,13 @@
   v
 [Incident + Alert Engine]
   |- Rule-based criticality logic
+  |- Dynamic threshold from calibration service
   |- Alert generation and severity tagging
+  v
+[Model Ops Loop]
+  |- Human event feedback API
+  |- Threshold recalibration endpoint
+  |- Drift monitoring against baseline score stats
   v
 [Persistence + Stream]
   |- SQL (SQLite/PostgreSQL)
@@ -46,6 +53,7 @@
 3. FastAPI + WebSocket supports low-latency streaming and easy integration with production API gateways.
 4. SQL event storage keeps incident audit trails deterministic and query-friendly.
 5. Frontend is decoupled from inference runtime via API + WS contracts for scalability.
+6. Model-ops APIs close the loop between operators and inference behavior with measurable threshold governance.
 
 ## Trade-offs
 

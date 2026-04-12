@@ -120,6 +120,11 @@ Grafana: [http://localhost:3001](http://localhost:3001)
 - POST /api/v1/stream/stop
 - GET /api/v1/events
 - GET /api/v1/alerts
+- GET /api/v1/model/status
+- GET /api/v1/model/calibration
+- GET /api/v1/model/drift
+- POST /api/v1/model/feedback
+- POST /api/v1/model/recalibrate
 - GET /metrics
 - WS /ws/events
 
@@ -130,6 +135,8 @@ Grafana: [http://localhost:3001](http://localhost:3001)
 ```bash
 python ml/scripts/extract_features.py --input data/raw --output data/processed/features.csv
 ```
+
+This stage now supports YOLO semantic feature fusion (object/person/vehicle/risk channels) with fallback behavior when YOLO is unavailable.
 
 ### 2. Train Two Anomaly Models
 
@@ -143,6 +150,14 @@ python ml/scripts/train_feature_anomaly.py --features data/processed/features.cs
 ```bash
 python ml/scripts/evaluate_anomaly.py --features data/processed/features.csv --ae models/autoencoder.pt --iforest models/isolation_forest.joblib --report artifacts/eval_report.json
 ```
+
+Evaluation report now includes:
+
+1. PR-AUC and ROC-AUC for each model.
+2. Automatic threshold calibration by maximizing F1.
+3. Ablation table: `autoencoder`, `isolation_forest`, `hybrid`, `yolo_semantic`, `hybrid_yolo_fusion`.
+4. Per-class incident recall and cross-scene diagnostics.
+5. Reference score distribution for production drift monitoring.
 
 ### 4. Latency Benchmark + Ablation Inputs
 
@@ -175,9 +190,15 @@ If you want to train on Kaggle GPU and then continue development in GitHub, use 
 
 Quick command once inside Kaggle notebook and repo root:
 
-python scripts/kaggle_train.py --input-dir /kaggle/input/ucf-crime-dataset --output-dir /kaggle/working/incident-intel-output --device auto --epochs 40 --latent-dim 64 --batch-size 128 --max-images 300000
+python scripts/kaggle_train.py --input-dir /kaggle/input/ucf-crime-dataset --output-dir /kaggle/working/incident-intel-output --device auto --epochs 40 --latent-dim 64 --batch-size 128 --max-images 300000 --load-cameras 4 --load-frames-per-camera 60 --feedback-samples 1000
 
 Optional benchmark in Kaggle (disabled by default): add --run-benchmark
+
+Additional quality-evidence stages now run by default (unless skipped):
+
+1. Multi-camera load validation (`multi_camera_load_test.json`)
+2. Feedback-loop threshold simulation (`feedback_simulation.json`)
+3. Readiness scoring (`project_readiness.json`)
 
 ## MLOps and Monitoring
 
@@ -185,6 +206,22 @@ Optional benchmark in Kaggle (disabled by default): add --run-benchmark
 - Prometheus scrape config: [monitoring/prometheus.yml](monitoring/prometheus.yml)
 - Grafana dashboard: [monitoring/grafana/dashboards/incident_intelligence.json](monitoring/grafana/dashboards/incident_intelligence.json)
 - Experiment design: [docs/research_plan.md](docs/research_plan.md)
+
+### Human Feedback and Recalibration Loop
+
+1. Submit event-level labels through `POST /api/v1/model/feedback`.
+2. Monitor readiness via `GET /api/v1/model/calibration`.
+3. Apply threshold updates via `POST /api/v1/model/recalibrate`.
+4. Watch score-distribution drift with `GET /api/v1/model/drift`.
+
+### Quality Evidence Reports
+
+Training/evaluation exports now include:
+
+1. `artifacts/eval_report.json`: split-safe ablations, calibrated thresholds, per-class and cross-scene diagnostics.
+2. `artifacts/multi_camera_load_test.json`: multi-camera throughput and latency SLO checks.
+3. `artifacts/feedback_simulation.json`: before/after threshold recalibration impact.
+4. `artifacts/project_readiness.json`: consolidated research/practical scoring gates.
 
 ## Deployment
 
