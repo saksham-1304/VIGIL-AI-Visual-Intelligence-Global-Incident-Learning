@@ -319,43 +319,43 @@ def subsample_rows(x: np.ndarray, max_rows: int, random_seed: int) -> np.ndarray
 
 
 def ocsvm_scores(
-    x_train_fit: np.ndarray,
+    x_fit: np.ndarray,
     x_train_eval: np.ndarray,
     x_test: np.ndarray,
     random_seed: int,
     max_train_rows: int,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    x_train_fit = subsample_rows(x_train_fit, max_rows=max_train_rows, random_seed=random_seed)
-    if len(x_train_fit) < 50:
+    x_fit = subsample_rows(x_fit, max_rows=max_train_rows, random_seed=random_seed)
+    if len(x_fit) < 50:
         return None
 
     scaler = StandardScaler()
-    x_fit_scaled = scaler.fit_transform(x_train_fit)
-    x_train_scaled = scaler.transform(x_train_eval)
+    x_fit_scaled = scaler.fit_transform(x_fit)
+    x_train_eval_scaled = scaler.transform(x_train_eval)
     x_test_scaled = scaler.transform(x_test)
 
     model = OneClassSVM(kernel="rbf", gamma="scale", nu=0.05)
     model.fit(x_fit_scaled)
 
-    train_score = _sigmoid_outlier(model.decision_function(x_train_scaled))
+    train_score = _sigmoid_outlier(model.decision_function(x_train_eval_scaled))
     test_score = _sigmoid_outlier(model.decision_function(x_test_scaled))
     return train_score.astype(float), test_score.astype(float)
 
 
 def lof_scores(
-    x_train_fit: np.ndarray,
+    x_fit: np.ndarray,
     x_train_eval: np.ndarray,
     x_test: np.ndarray,
     random_seed: int,
     max_train_rows: int,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    x_train_fit = subsample_rows(x_train_fit, max_rows=max_train_rows, random_seed=random_seed)
-    if len(x_train_fit) < 80:
+    x_fit = subsample_rows(x_fit, max_rows=max_train_rows, random_seed=random_seed)
+    if len(x_fit) < 80:
         return None
 
     scaler = StandardScaler()
-    x_fit_scaled = scaler.fit_transform(x_train_fit)
-    x_train_scaled = scaler.transform(x_train_eval)
+    x_fit_scaled = scaler.fit_transform(x_fit)
+    x_train_eval_scaled = scaler.transform(x_train_eval)
     x_test_scaled = scaler.transform(x_test)
 
     n_neighbors = min(35, len(x_fit_scaled) - 1)
@@ -365,7 +365,7 @@ def lof_scores(
     model = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True)
     model.fit(x_fit_scaled)
 
-    train_score = _sigmoid_outlier(model.decision_function(x_train_scaled))
+    train_score = _sigmoid_outlier(model.decision_function(x_train_eval_scaled))
     test_score = _sigmoid_outlier(model.decision_function(x_test_scaled))
     return train_score.astype(float), test_score.astype(float)
 
@@ -422,7 +422,7 @@ def main() -> None:
     x_train_normal = x_train[normal_mask_train] if int(np.sum(normal_mask_train)) > 0 else x_train
 
     ocsvm = ocsvm_scores(
-        x_train_fit=x_train_normal,
+        x_fit=x_train_normal,
         x_train_eval=x_train,
         x_test=x_test,
         random_seed=args.random_seed,
@@ -432,7 +432,7 @@ def main() -> None:
         candidates["one_class_svm"] = ocsvm
 
     lof = lof_scores(
-        x_train_fit=x_train_normal,
+        x_fit=x_train_normal,
         x_train_eval=x_train,
         x_test=x_test,
         random_seed=args.random_seed + 7,

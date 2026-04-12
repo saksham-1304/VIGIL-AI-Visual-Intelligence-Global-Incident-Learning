@@ -135,6 +135,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--holdout-ratio", type=float, default=0.2)
     parser.add_argument("--random-seed", type=int, default=42)
     parser.add_argument("--baseline-max-train", type=int, default=20000)
+    parser.add_argument("--skip-extraction", action="store_true")
+    parser.add_argument("--skip-autoencoder", action="store_true")
+    parser.add_argument("--skip-iforest", action="store_true")
     parser.add_argument("--skip-load-test", action="store_true")
     parser.add_argument("--load-cameras", type=int, default=4)
     parser.add_argument("--load-frames-per-camera", type=int, default=75)
@@ -205,13 +208,18 @@ def main() -> None:
         print("[kaggle_train] YOLO semantic extraction disabled", flush=True)
         extract_cmd.append("--disable-yolo")
 
-    run_command(
-        "feature extraction",
-        extract_cmd,
-        cwd=repo_root,
-        env=env,
-        heartbeat_seconds=args.heartbeat_seconds,
-    )
+    if args.skip_extraction:
+        if not features_path.exists():
+            raise FileNotFoundError(f"--skip-extraction requested but features file is missing: {features_path}")
+        print(f"[kaggle_train] Skipping feature extraction and reusing: {features_path}", flush=True)
+    else:
+        run_command(
+            "feature extraction",
+            extract_cmd,
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
 
     autoencoder_cmd = [
         python_exec,
@@ -246,33 +254,43 @@ def main() -> None:
     if args.resume:
         autoencoder_cmd.append("--resume")
 
-    run_command(
-        "autoencoder training",
-        autoencoder_cmd,
-        cwd=repo_root,
-        env=env,
-        heartbeat_seconds=args.heartbeat_seconds,
-    )
+    if args.skip_autoencoder:
+        if not autoencoder_path.exists():
+            raise FileNotFoundError(f"--skip-autoencoder requested but model is missing: {autoencoder_path}")
+        print(f"[kaggle_train] Skipping autoencoder training and reusing: {autoencoder_path}", flush=True)
+    else:
+        run_command(
+            "autoencoder training",
+            autoencoder_cmd,
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
 
 
-    run_command(
-        "feature anomaly model training",
-        [
-            python_exec,
-            "ml/scripts/train_feature_anomaly.py",
-            "--features",
-            str(features_path),
-            "--output",
-            str(iforest_path),
-            "--n-estimators",
-            str(args.n_estimators),
-            "--contamination",
-            str(args.contamination),
-        ],
-        cwd=repo_root,
-        env=env,
-        heartbeat_seconds=args.heartbeat_seconds,
-    )
+    if args.skip_iforest:
+        if not iforest_path.exists():
+            raise FileNotFoundError(f"--skip-iforest requested but model is missing: {iforest_path}")
+        print(f"[kaggle_train] Skipping Isolation Forest training and reusing: {iforest_path}", flush=True)
+    else:
+        run_command(
+            "feature anomaly model training",
+            [
+                python_exec,
+                "ml/scripts/train_feature_anomaly.py",
+                "--features",
+                str(features_path),
+                "--output",
+                str(iforest_path),
+                "--n-estimators",
+                str(args.n_estimators),
+                "--contamination",
+                str(args.contamination),
+            ],
+            cwd=repo_root,
+            env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
 
     run_command(
         "evaluation",
@@ -445,6 +463,9 @@ def main() -> None:
             "holdout_ratio": args.holdout_ratio,
             "random_seed": args.random_seed,
             "baseline_max_train": args.baseline_max_train,
+            "skip_extraction": args.skip_extraction,
+            "skip_autoencoder": args.skip_autoencoder,
+            "skip_iforest": args.skip_iforest,
             "load_test_enabled": not args.skip_load_test,
             "load_cameras": args.load_cameras,
             "load_frames_per_camera": args.load_frames_per_camera,

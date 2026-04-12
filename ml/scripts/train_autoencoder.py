@@ -115,6 +115,7 @@ def main() -> None:
         "final_loss": float(history.losses[-1]),
         "min_loss": float(min(history.losses)),
         "epochs": args.epochs,
+        "device_is_cuda": int(str(resolved_device).startswith("cuda")),
         "gpu_count": gpu_count,
         "multi_gpu_used": int(multi_gpu_used),
         "amp_enabled": int(args.amp and resolved_device.startswith("cuda")),
