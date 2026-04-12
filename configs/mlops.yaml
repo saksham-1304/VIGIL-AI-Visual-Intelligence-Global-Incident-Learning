@@ -1,0 +1,11 @@
+mlflow:
+  tracking_uri: http://localhost:5000
+  experiment_name: incident-intel-anomaly
+
+orchestration:
+  framework: prefect
+  flow: incident-intelligence-training-flow
+
+monitoring:
+  prometheus_scrape_interval: 5s
+  grafana_dashboard: incident_intelligence.json

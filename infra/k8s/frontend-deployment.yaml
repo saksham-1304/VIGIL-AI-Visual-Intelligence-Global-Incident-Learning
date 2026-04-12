@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: incident-frontend
+  template:
+    metadata:
+      labels:
+        app: incident-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: incident-intel/frontend:latest
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: NEXT_PUBLIC_API_BASE_URL
+              value: http://incident-api:8000
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-frontend
+spec:
+  selector:
+    app: incident-frontend
+  ports:
+    - port: 3000
+      targetPort: 3000

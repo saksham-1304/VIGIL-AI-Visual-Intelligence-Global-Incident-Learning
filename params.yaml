@@ -1,0 +1,13 @@
+autoencoder:
+  latent_dim: 32
+  epochs: 20
+  learning_rate: 0.001
+  batch_size: 64
+
+iforest:
+  n_estimators: 300
+  contamination: 0.03
+
+benchmark:
+  frame_skip: 2
+  confidence_threshold: 0.35

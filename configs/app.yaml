@@ -1,0 +1,17 @@
+app:
+  name: Real-Time Multimodal Incident Intelligence API
+  env: development
+  log_level: INFO
+
+inference:
+  yolo_weights: yolov8n.pt
+  model_device: cpu
+  anomaly_threshold: 0.72
+
+stream:
+  default_source: webcam
+  frame_skip: 3
+
+storage:
+  database_url: sqlite:///./incident_intel.db
+  redis_url: redis://localhost:6379/0

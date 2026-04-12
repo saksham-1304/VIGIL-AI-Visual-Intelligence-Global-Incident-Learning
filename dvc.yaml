@@ -1,0 +1,43 @@
+stages:
+  extract_features:
+    cmd: python ml/scripts/extract_features.py --input data/raw --output data/processed/features.csv
+    deps:
+      - data/raw
+      - ml/scripts/extract_features.py
+    outs:
+      - data/processed/features.csv
+
+  train_autoencoder:
+    cmd: python ml/scripts/train_autoencoder.py --features data/processed/features.csv --output models/autoencoder.pt
+    deps:
+      - data/processed/features.csv
+      - ml/anomaly/autoencoder.py
+      - ml/scripts/train_autoencoder.py
+    params:
+      - autoencoder.latent_dim
+      - autoencoder.epochs
+      - autoencoder.learning_rate
+    outs:
+      - models/autoencoder.pt
+
+  train_iforest:
+    cmd: python ml/scripts/train_feature_anomaly.py --features data/processed/features.csv --output models/isolation_forest.joblib
+    deps:
+      - data/processed/features.csv
+      - ml/anomaly/feature_anomaly.py
+      - ml/scripts/train_feature_anomaly.py
+    params:
+      - iforest.n_estimators
+      - iforest.contamination
+    outs:
+      - models/isolation_forest.joblib
+
+  evaluate:
+    cmd: python ml/scripts/evaluate_anomaly.py --features data/processed/features.csv --ae models/autoencoder.pt --iforest models/isolation_forest.joblib --report artifacts/eval_report.json
+    deps:
+      - data/processed/features.csv
+      - models/autoencoder.pt
+      - models/isolation_forest.joblib
+      - ml/scripts/evaluate_anomaly.py
+    outs:
+      - artifacts/eval_report.json
