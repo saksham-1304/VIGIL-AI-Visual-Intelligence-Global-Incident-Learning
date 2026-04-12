@@ -20,6 +20,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--amp", action="store_true", help="Enable mixed precision on CUDA")
+    parser.add_argument("--multi-gpu", action="store_true", help="Use all visible GPUs via DataParallel")
+    parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")
+    parser.add_argument("--checkpoint-dir", type=str, default="", help="Directory to store epoch checkpoints")
+    parser.add_argument("--checkpoint-interval", type=int, default=1, help="Save checkpoint every N epochs")
+    parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint in checkpoint dir")
     return parser.parse_args()
 
 
@@ -60,6 +66,17 @@ def main() -> None:
     resolved_device = resolve_device(args.device)
     features_df = pd.read_csv(args.features)
 
+    gpu_count = 0
+    try:
+        import torch
+
+        gpu_count = torch.cuda.device_count() if resolved_device.startswith("cuda") else 0
+    except Exception:
+        gpu_count = 0
+
+    checkpoint_dir = args.checkpoint_dir.strip() or None
+    multi_gpu_used = bool(args.multi_gpu and resolved_device.startswith("cuda") and gpu_count > 1)
+
     feature_cols = [
         col
         for col in features_df.columns
@@ -74,6 +91,12 @@ def main() -> None:
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         device=resolved_device,
+        use_amp=args.amp,
+        num_workers=args.num_workers,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_interval=args.checkpoint_interval,
+        resume=args.resume,
+        multi_gpu=args.multi_gpu,
     )
 
     output_path = Path(args.output)
@@ -85,6 +108,9 @@ def main() -> None:
         "min_loss": float(min(history.losses)),
         "epochs": args.epochs,
         "device": resolved_device,
+        "gpu_count": gpu_count,
+        "multi_gpu_used": int(multi_gpu_used),
+        "amp_enabled": int(args.amp and resolved_device.startswith("cuda")),
     }
     metrics_path = output_path.with_suffix(".metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
@@ -96,6 +122,14 @@ def main() -> None:
             "learning_rate": args.learning_rate,
             "batch_size": args.batch_size,
             "device": resolved_device,
+            "gpu_count": gpu_count,
+            "multi_gpu_requested": args.multi_gpu,
+            "multi_gpu_used": multi_gpu_used,
+            "amp": args.amp,
+            "num_workers": args.num_workers,
+            "checkpoint_dir": checkpoint_dir or "",
+            "checkpoint_interval": args.checkpoint_interval,
+            "resume": args.resume,
         },
         metrics=metrics,
         artifact_path=metrics_path,
@@ -104,6 +138,8 @@ def main() -> None:
     print(f"Autoencoder saved to {output_path}")
     print(f"Metrics saved to {metrics_path}")
     print(f"Training device: {resolved_device}")
+    print(f"Visible GPU count: {gpu_count}")
+    print(f"Multi-GPU used: {multi_gpu_used}")
 
 
 if __name__ == "__main__":
