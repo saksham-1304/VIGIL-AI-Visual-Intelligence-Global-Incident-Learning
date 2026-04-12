@@ -3,17 +3,95 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
+from typing import TextIO
 
 
-def run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
-    print("$", " ".join(command))
-    completed = subprocess.run(command, cwd=str(cwd), env=env, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Command failed with exit code {completed.returncode}: {' '.join(command)}")
+def _format_duration(seconds: float) -> str:
+    total = int(max(0, seconds))
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _stream_pipe(pipe: TextIO | None, output_queue: queue.Queue[str | None]) -> None:
+    if pipe is None:
+        output_queue.put(None)
+        return
+    try:
+        for line in iter(pipe.readline, ""):
+            output_queue.put(line.rstrip("\n"))
+    finally:
+        pipe.close()
+        output_queue.put(None)
+
+
+def run_command(
+    stage_name: str,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    heartbeat_seconds: int,
+) -> None:
+    print(f"\n=== Stage: {stage_name} ===", flush=True)
+    print("$", " ".join(command), flush=True)
+
+    start_time = time.monotonic()
+    process = subprocess.Popen(
+        command,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    output_queue: queue.Queue[str | None] = queue.Queue()
+    reader = threading.Thread(target=_stream_pipe, args=(process.stdout, output_queue), daemon=True)
+    reader.start()
+
+    stream_closed = False
+    last_heartbeat = start_time
+
+    while True:
+        try:
+            item = output_queue.get(timeout=1.0)
+            if item is None:
+                stream_closed = True
+            else:
+                print(item, flush=True)
+        except queue.Empty:
+            pass
+
+        now = time.monotonic()
+        if heartbeat_seconds > 0 and process.poll() is None and now - last_heartbeat >= heartbeat_seconds:
+            print(
+                f"[heartbeat] {stage_name} still running | elapsed={_format_duration(now - start_time)}",
+                flush=True,
+            )
+            last_heartbeat = now
+
+        if stream_closed and process.poll() is not None:
+            break
+
+    return_code = process.wait()
+    reader.join(timeout=1.0)
+    elapsed = _format_duration(time.monotonic() - start_time)
+    print(f"=== Stage complete: {stage_name} | duration={elapsed} ===", flush=True)
+
+    if return_code != 0:
+        raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(command)}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +125,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--run-benchmark", action="store_true")
     parser.add_argument("--max-benchmark-frames", type=int, default=240)
+    parser.add_argument("--heartbeat-seconds", type=int, default=30)
+    parser.add_argument("--progress-every", type=int, default=5000)
     return parser.parse_args()
 
 
@@ -76,10 +156,12 @@ def main() -> None:
     env = os.environ.copy()
     existing_path = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(repo_root) if not existing_path else f"{str(repo_root)}{os.pathsep}{existing_path}"
+    env["PYTHONUNBUFFERED"] = "1"
 
     python_exec = sys.executable
 
     run_command(
+        "feature extraction",
         [
             python_exec,
             "ml/scripts/extract_features.py",
@@ -91,9 +173,14 @@ def main() -> None:
             str(args.frame_step),
             "--max-images",
             str(args.max_images),
+            "--progress-every",
+            str(args.progress_every),
+            "--heartbeat-seconds",
+            str(args.heartbeat_seconds),
         ],
         cwd=repo_root,
         env=env,
+        heartbeat_seconds=args.heartbeat_seconds,
     )
 
     autoencoder_cmd = [
@@ -119,6 +206,8 @@ def main() -> None:
         str(checkpoint_dir),
         "--checkpoint-interval",
         str(args.checkpoint_interval),
+        "--heartbeat-seconds",
+        str(args.heartbeat_seconds),
     ]
     if args.amp:
         autoencoder_cmd.append("--amp")
@@ -127,10 +216,17 @@ def main() -> None:
     if args.resume:
         autoencoder_cmd.append("--resume")
 
-    run_command(autoencoder_cmd, cwd=repo_root, env=env)
+    run_command(
+        "autoencoder training",
+        autoencoder_cmd,
+        cwd=repo_root,
+        env=env,
+        heartbeat_seconds=args.heartbeat_seconds,
+    )
 
 
     run_command(
+        "feature anomaly model training",
         [
             python_exec,
             "ml/scripts/train_feature_anomaly.py",
@@ -145,9 +241,11 @@ def main() -> None:
         ],
         cwd=repo_root,
         env=env,
+        heartbeat_seconds=args.heartbeat_seconds,
     )
 
     run_command(
+        "evaluation",
         [
             python_exec,
             "ml/scripts/evaluate_anomaly.py",
@@ -164,10 +262,12 @@ def main() -> None:
         ],
         cwd=repo_root,
         env=env,
+        heartbeat_seconds=args.heartbeat_seconds,
     )
 
     if args.run_benchmark:
         run_command(
+            "benchmark",
             [
                 python_exec,
                 "ml/scripts/benchmark_pipeline.py",
@@ -180,6 +280,7 @@ def main() -> None:
             ],
             cwd=repo_root,
             env=env,
+            heartbeat_seconds=args.heartbeat_seconds,
         )
 
     output_dir = Path(args.output_dir)
@@ -212,6 +313,8 @@ def main() -> None:
             "checkpoint_dir": str(checkpoint_dir),
             "checkpoint_interval": args.checkpoint_interval,
             "resume": args.resume,
+            "heartbeat_seconds": args.heartbeat_seconds,
+            "progress_every": args.progress_every,
             "checkpoint_files": sorted([p.name for p in checkpoint_dir.glob("*.pt")]),
         },
         "output_dir": str(output_dir),

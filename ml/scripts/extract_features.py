@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import cv2
@@ -19,6 +20,8 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Maximum number of images to process when using image datasets (0 means all)",
     )
+    parser.add_argument("--progress-every", type=int, default=5000, help="Log every N processed samples")
+    parser.add_argument("--heartbeat-seconds", type=int, default=30, help="Log heartbeat every N seconds")
     return parser.parse_args()
 
 
@@ -91,6 +94,9 @@ def generate_synthetic_features(rows: int = 1500) -> pd.DataFrame:
 
 def main() -> None:
     args = parse_args()
+    progress_every = max(1, args.progress_every)
+    heartbeat_seconds = max(0, args.heartbeat_seconds)
+
     input_path = Path(args.input)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,14 +117,18 @@ def main() -> None:
     if not video_files and not image_files:
         df = generate_synthetic_features()
         df.to_csv(output_path, index=False)
-        print(f"No videos found in {input_path}. Generated synthetic features at {output_path}")
+        print(f"No videos found in {input_path}. Generated synthetic features at {output_path}", flush=True)
         return
 
     if video_files:
-        for video in video_files:
+        total_videos = len(video_files)
+        for video_idx, video in enumerate(video_files, start=1):
+            print(f"[extract] Processing video {video_idx}/{total_videos}: {video}", flush=True)
             capture = cv2.VideoCapture(str(video))
             prev_gray = None
             frame_idx = 0
+            sampled_frames = 0
+            last_log = time.monotonic()
             while True:
                 ok, frame = capture.read()
                 if not ok:
@@ -142,12 +152,31 @@ def main() -> None:
                         "source": video.name,
                     }
                 )
+                sampled_frames += 1
+
+                now = time.monotonic()
+                should_log = sampled_frames % progress_every == 0
+                if heartbeat_seconds > 0 and now - last_log >= heartbeat_seconds:
+                    should_log = True
+                if should_log:
+                    print(
+                        f"[extract] video={video.name} sampled_frames={sampled_frames} "
+                        f"frames_read={frame_idx} total_rows={len(records)}",
+                        flush=True,
+                    )
+                    last_log = now
             capture.release()
+            print(
+                f"[extract] Completed {video.name}: sampled_frames={sampled_frames} rows_total={len(records)}",
+                flush=True,
+            )
     else:
         sorted_images = sorted(image_files, key=lambda p: (str(p.parent), p.name))
         processed_images = 0
         current_group: str | None = None
         prev_gray = None
+        total_images = len(sorted_images)
+        last_log = time.monotonic()
 
         for index, image_path in enumerate(sorted_images):
             if args.max_images > 0 and processed_images >= args.max_images:
@@ -181,7 +210,19 @@ def main() -> None:
             )
             processed_images += 1
 
-        print(f"Processed {processed_images} images from {input_path}")
+            now = time.monotonic()
+            should_log = processed_images % progress_every == 0
+            if heartbeat_seconds > 0 and now - last_log >= heartbeat_seconds:
+                should_log = True
+            if should_log:
+                print(
+                    f"[extract] images_processed={processed_images}/{total_images} "
+                    f"total_rows={len(records)} current={image_path.name}",
+                    flush=True,
+                )
+                last_log = now
+
+        print(f"Processed {processed_images} images from {input_path}", flush=True)
 
     if not records:
         df = generate_synthetic_features()
@@ -189,7 +230,7 @@ def main() -> None:
         df = pd.DataFrame.from_records(records)
 
     df.to_csv(output_path, index=False)
-    print(f"Saved {len(df)} feature rows to {output_path}")
+    print(f"Saved {len(df)} feature rows to {output_path}", flush=True)
 
 
 if __name__ == "__main__":

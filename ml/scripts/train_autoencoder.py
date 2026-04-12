@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", type=str, default="", help="Directory to store epoch checkpoints")
     parser.add_argument("--checkpoint-interval", type=int, default=1, help="Save checkpoint every N epochs")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint in checkpoint dir")
+    parser.add_argument("--heartbeat-seconds", type=int, default=30, help="Training heartbeat interval")
     return parser.parse_args()
 
 
@@ -84,6 +85,12 @@ def main() -> None:
     ]
     x = features_df[feature_cols].astype(float).to_numpy()
 
+    print(
+        f"Starting autoencoder training on {len(x)} samples with {len(feature_cols)} features "
+        f"| epochs={args.epochs} batch_size={args.batch_size} device={resolved_device}",
+        flush=True,
+    )
+
     model, history = train_autoencoder(
         x,
         latent_dim=args.latent_dim,
@@ -97,6 +104,7 @@ def main() -> None:
         checkpoint_interval=args.checkpoint_interval,
         resume=args.resume,
         multi_gpu=args.multi_gpu,
+        heartbeat_seconds=max(0, args.heartbeat_seconds),
     )
 
     output_path = Path(args.output)

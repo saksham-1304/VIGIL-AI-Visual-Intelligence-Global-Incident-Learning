@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -54,6 +55,17 @@ def _latest_checkpoint(checkpoint_dir: Path) -> Path | None:
     return candidates[-1] if candidates else None
 
 
+def _format_duration(seconds: float) -> str:
+    total = int(max(0, seconds))
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
 def train_autoencoder(
     features: np.ndarray,
     latent_dim: int = 32,
@@ -67,6 +79,7 @@ def train_autoencoder(
     checkpoint_interval: int = 1,
     resume: bool = False,
     multi_gpu: bool = False,
+    heartbeat_seconds: int = 30,
 ) -> tuple[FeatureAutoencoder, TrainingHistory]:
     if features.ndim != 2:
         raise ValueError("Features must be a 2D array")
@@ -121,11 +134,24 @@ def train_autoencoder(
                 scaler.load_state_dict(payload["scaler_state"])
             losses = list(payload.get("losses", []))
             start_epoch = int(payload.get("epoch", 0))
+            print(
+                f"[train] Resumed from checkpoint {latest.name} at epoch {start_epoch}",
+                flush=True,
+            )
+
+    print(
+        f"[train] Starting autoencoder training | epochs={epochs} batch_size={batch_size} "
+        f"device={device} amp={scaler.is_enabled()} workers={max(0, num_workers)}",
+        flush=True,
+    )
 
     model.train()
     for epoch_idx in range(start_epoch, epochs):
         epoch_loss = 0.0
-        for (batch,) in loader:
+        epoch_start = time.monotonic()
+        last_heartbeat = epoch_start
+        total_batches = max(1, len(loader))
+        for batch_idx, (batch,) in enumerate(loader, start=1):
             batch = batch.to(device, non_blocking=pin_memory)
             optimizer.zero_grad(set_to_none=True)
 
@@ -142,13 +168,31 @@ def train_autoencoder(
                 optimizer.step()
 
             epoch_loss += float(loss.item())
+
+            now = time.monotonic()
+            if heartbeat_seconds > 0 and now - last_heartbeat >= heartbeat_seconds:
+                running_avg = epoch_loss / max(1, batch_idx)
+                current_epoch = epoch_idx + 1
+                print(
+                    f"[train][heartbeat] epoch={current_epoch}/{epochs} batch={batch_idx}/{total_batches} "
+                    f"avg_loss={running_avg:.6f} elapsed={_format_duration(now - epoch_start)}",
+                    flush=True,
+                )
+                last_heartbeat = now
+
         avg_epoch_loss = epoch_loss / max(1, len(loader))
         losses.append(avg_epoch_loss)
 
         current_epoch = epoch_idx + 1
+        print(
+            f"[train][epoch] {current_epoch}/{epochs} loss={avg_epoch_loss:.6f} "
+            f"duration={_format_duration(time.monotonic() - epoch_start)}",
+            flush=True,
+        )
         if checkpoint_root is not None:
             interval = max(1, checkpoint_interval)
             if current_epoch % interval == 0 or current_epoch == epochs:
+                checkpoint_path = _checkpoint_path(checkpoint_root, current_epoch)
                 torch.save(
                     {
                         "state_dict": _unwrap_model(model).state_dict(),
@@ -159,8 +203,9 @@ def train_autoencoder(
                         "epoch": current_epoch,
                         "losses": losses,
                     },
-                    _checkpoint_path(checkpoint_root, current_epoch),
+                    checkpoint_path,
                 )
+                print(f"[train][checkpoint] saved {checkpoint_path}", flush=True)
 
     base_model = _unwrap_model(model)
     return base_model, TrainingHistory(losses=losses)
