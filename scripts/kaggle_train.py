@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import queue
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import TextIO
 
@@ -92,6 +94,22 @@ def run_command(
 
     if return_code != 0:
         raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(command)}")
+
+
+def _build_lightweight_archive(output_dir: Path, destination: Path) -> Path:
+    if destination.exists():
+        destination.unlink()
+
+    with zipfile.ZipFile(destination, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for candidate in sorted(output_dir.iterdir()):
+            if not candidate.is_file():
+                continue
+            # Avoid creating nested archives of previous zip outputs.
+            if candidate.suffix == ".zip":
+                continue
+            archive.write(candidate, arcname=candidate.name)
+
+    return destination
 
 
 def parse_args() -> argparse.Namespace:
@@ -494,16 +512,55 @@ def main() -> None:
         "output_dir": str(output_dir),
         "files": sorted([path.name for path in output_dir.iterdir() if path.is_file()]),
     }
-    summary_path = output_dir / "training_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     archive_base = output_dir / "incident_intel_training_outputs"
-    archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=str(output_dir))
+    archive_zip_path = Path(f"{archive_base}.zip")
+    archive_path: str | None = None
+    archive_status = "created"
+
+    try:
+        if archive_zip_path.exists():
+            archive_zip_path.unlink()
+        archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=str(output_dir))
+    except OSError as exc:
+        if exc.errno != errno.ENOSPC:
+            raise
+
+        archive_status = "skipped_no_space"
+        if archive_zip_path.exists():
+            archive_zip_path.unlink()
+
+        print(
+            "[kaggle_train] Full archive skipped due to limited disk space. "
+            "Attempting lightweight archive.",
+            flush=True,
+        )
+
+        lightweight_archive = output_dir / "incident_intel_training_outputs_light.zip"
+        try:
+            archive_path = str(_build_lightweight_archive(output_dir=output_dir, destination=lightweight_archive))
+            archive_status = "lightweight_created"
+        except OSError as fallback_exc:
+            if fallback_exc.errno != errno.ENOSPC:
+                raise
+            archive_status = "skipped_no_space"
+            archive_path = None
+            if lightweight_archive.exists():
+                lightweight_archive.unlink()
+            print("[kaggle_train] Archive skipped: no space left on device.", flush=True)
+
+    summary["archive"] = {"path": archive_path, "status": archive_status}
+    summary["files"] = sorted([path.name for path in output_dir.iterdir() if path.is_file()])
+    summary_path = output_dir / "training_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print("Training completed successfully")
     print(f"Output directory: {output_dir}")
     print(f"Summary file: {summary_path}")
-    print(f"Archive: {archive_path}")
+    if archive_path:
+        print(f"Archive: {archive_path}")
+    else:
+        print("Archive: skipped (insufficient disk space)")
 
 
 if __name__ == "__main__":
