@@ -436,9 +436,19 @@ def main() -> None:
 
     checkpoint_export_dir = output_dir / "checkpoints"
     if checkpoint_dir.exists():
-        if checkpoint_export_dir.exists():
-            shutil.rmtree(checkpoint_export_dir)
-        shutil.copytree(checkpoint_dir, checkpoint_export_dir)
+        checkpoint_src = checkpoint_dir.resolve()
+        checkpoint_dst = checkpoint_export_dir.resolve()
+
+        # Avoid deleting the source when checkpoints are already under output/checkpoints.
+        if checkpoint_src == checkpoint_dst or checkpoint_src.is_relative_to(checkpoint_dst):
+            print(
+                f"[kaggle_train] Checkpoints already inside output directory, skipping copy: {checkpoint_dir}",
+                flush=True,
+            )
+        else:
+            if checkpoint_export_dir.exists():
+                shutil.rmtree(checkpoint_export_dir)
+            shutil.copytree(checkpoint_dir, checkpoint_export_dir)
     else:
         print(
             f"[kaggle_train] Checkpoint directory not found, skipping export: {checkpoint_dir}",
